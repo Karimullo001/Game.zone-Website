@@ -1,0 +1,151 @@
+// server.js
+const express = require('express');
+const mongoose = require('mongoose');
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const session = require('express-session');
+const bodyParser = require('body-parser');
+
+const app = express();
+const port = 3000;
+
+// MongoDB connection
+mongoose.connect('mongodb://localhost/gamezone', { useNewUrlParser: true, useUnifiedTopology: true })
+    .then(() => console.log('MongoDB connected'))
+    .catch(err => console.log(err));
+
+// User schema and model
+const userSchema = new mongoose.Schema({
+    username: String,
+    profilePicture: String,
+    country: String
+});
+
+const User = mongoose.model('User', userSchema);
+
+// Passport setup
+passport.use(new GoogleStrategy({
+    clientID: 'YOUR_GOOGLE_CLIENT_ID',  // o'zingizning Client ID-ni qo'ying
+    clientSecret: 'YOUR_GOOGLE_CLIENT_SECRET',  // o'zingizning Client Secret-ni qo'ying
+    callbackURL: "http://localhost:3000/auth/google/callback"
+}, function (token, tokenSecret, profile, done) {
+    User.findOne({ googleId: profile.id }, (err, user) => {
+        if (err) return done(err);
+        if (user) {
+            return done(null, user);
+        } else {
+            const newUser = new User({
+                username: profile.displayName,
+                profilePicture: profile.photos[0].value,
+                country: profile._json.locale
+            });
+            newUser.save()
+                .then(() => done(null, newUser));
+        }
+    });
+}));
+
+passport.serializeUser((user, done) => done(null, user.id));
+passport.deserializeUser((id, done) => {
+    User.findById(id, (err, user) => done(err, user));
+});
+
+// Middleware
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(session({ secret: 'secret', resave: true, saveUninitialized: true }));
+app.use(passport.initialize());
+app.use(passport.session());
+
+// Serve static files (like images, CSS, etc.)
+app.use(express.static('public'));
+
+// Routes
+app.get('/', (req, res) => {
+    res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>GameZone</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                background-color: #f0f0f0;
+                text-align: center;
+            }
+
+            .container {
+                padding: 50px;
+                margin: 100px auto;
+                background-color: #fff;
+                border-radius: 8px;
+                box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+                width: 400px;
+            }
+
+            h1 {
+                font-size: 30px;
+                color: #333;
+            }
+
+            p {
+                font-size: 16px;
+                color: #555;
+            }
+
+            .login-btn {
+                display: inline-block;
+                padding: 10px 20px;
+                background-color: #4285F4;
+                color: white;
+                text-decoration: none;
+                border-radius: 5px;
+                font-size: 18px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Welcome to GameZone</h1>
+            <p>Login with your Google account to access the platform.</p>
+            <a href="/auth/google" class="login-btn">Login with Google</a>
+        </div>
+    </body>
+    </html>
+    `);
+});
+
+app.get('/auth/google', passport.authenticate('google', {
+    scope: ['profile', 'email']
+}));
+
+app.get('/auth/google/callback',
+    passport.authenticate('google', { failureRedirect: '/' }),
+    (req, res) => {
+        res.redirect('/profile');
+    });
+
+app.get('/profile', (req, res) => {
+    if (!req.isAuthenticated()) {
+        return res.redirect('/');
+    }
+    res.send(`
+        <h1>Welcome, ${req.user.username}</h1>
+        <img src="${req.user.profilePicture}" alt="Profile Picture" width="100">
+        <p>Country: ${req.user.country}</p>
+        <a href="/logout">Logout</a>
+    `);
+});
+
+app.get('/logout', (req, res) => {
+    req.logout((err) => {
+        if (err) return next(err);
+        res.redirect('/');
+    });
+});
+
+// Start server
+app.listen(port, () => {
+    console.log(`Server running at http://localhost:${port}`);
+});
